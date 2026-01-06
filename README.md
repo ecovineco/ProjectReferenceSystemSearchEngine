@@ -36,6 +36,7 @@ This is a wrapper script required **only** for creating the Windows Executable.
 Open your terminal and run:
 ```bash
 pip install streamlit pandas sentence-transformers openpyxl numpy pyinstaller
+```
 
 ## 🚀 How to Run
 
