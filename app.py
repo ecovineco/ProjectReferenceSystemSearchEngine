@@ -1,11 +1,43 @@
+import os
+import sys
+
+# --- 0. LAUNCHER (Merged from run_app.py) ---
+# When run directly with "python app.py", launch Streamlit to serve this file.
+# When Streamlit re-executes this file, its runtime already exists, so we skip.
+def _is_streamlit_running():
+    try:
+        from streamlit.runtime import exists
+        return exists()
+    except ImportError:
+        return False
+
+if not _is_streamlit_running():
+    import streamlit.web.cli as stcli
+
+    def resolve_path(path):
+        if getattr(sys, "frozen", False):
+            basedir = sys._MEIPASS
+        else:
+            basedir = os.path.dirname(__file__)
+        return os.path.join(basedir, path)
+
+    app_path = resolve_path("app.py")
+    sys.argv = [
+        "streamlit",
+        "run",
+        app_path,
+        "--global.developmentMode=false"
+    ]
+    sys.exit(stcli.main())
+
+# --- Beyond this point: Streamlit app code ---
 import streamlit as st
 import pandas as pd
 import numpy as np
 from sentence_transformers import SentenceTransformer, util
+from huggingface_hub import snapshot_download
 import pickle
-import os
 import time
-import sys
 
 # --- 1. PATH CONFIGURATION (Crucial for .exe) ---
 def get_base_path():
@@ -20,11 +52,24 @@ def get_base_path():
         return os.path.dirname(os.path.abspath(__file__))
 
 BASE_DIR = get_base_path()
+DATA_DIR = os.path.join(BASE_DIR, "data")
 
-# Define paths relative to the executable/script location
-CACHE_FILE = os.path.join(BASE_DIR, "embeddings.pkl")
-MODEL_PATH = os.path.join(BASE_DIR, "model_cache") # We save the AI brain here
-MODEL_NAME = 'all-mpnet-base-v2'
+# Define paths: data/embeddings/ for index, data/model/ for the AI model cache
+EMBEDDINGS_DIR = os.path.join(DATA_DIR, "embeddings")
+MODEL_DIR = os.path.join(DATA_DIR, "model")
+CACHE_FILE = os.path.join(EMBEDDINGS_DIR, "embeddings.pkl")
+MODEL_REPO = 'sentence-transformers/all-mpnet-base-v2'
+
+# Auto-create the data directories if they don't exist yet
+os.makedirs(EMBEDDINGS_DIR, exist_ok=True)
+os.makedirs(MODEL_DIR, exist_ok=True)
+
+def load_model():
+    """Download model directly into data/model/ and load from there.
+    Uses local_dir (not cache_dir) to avoid symlinks, which break on Windows/OneDrive.
+    """
+    snapshot_download(repo_id=MODEL_REPO, local_dir=MODEL_DIR)
+    return SentenceTransformer(MODEL_DIR)
 
 # --- 2. APP UI SETUP ---
 st.set_page_config(page_title="Project Reference System", layout="wide")
@@ -58,9 +103,8 @@ if st.sidebar.button("Build/Update Database"):
                     # Weighted: Repeat the Name 3 times to make it 3x more important than the description
                     df['combined_text'] = (df['Name'].fillna('') + ". ") * 3 + df['Description'].fillna('')
                     
-                    # D. Load Model (Downloads to 'model_cache' folder)
-                    # This ensures the model files are right here, ready for packaging
-                    model = SentenceTransformer(MODEL_NAME, cache_folder=MODEL_PATH)
+                    # D. Load Model (Downloads to data/model/ on first run)
+                    model = load_model()
                     
                     # E. Create Embeddings
                     corpus_embeddings = model.encode(df['combined_text'].tolist(), convert_to_tensor=True)
@@ -106,7 +150,7 @@ if search_clicked or query:
                 df = cache['data']
             
             # B. Load Model (Fast, from local cache)
-            model = SentenceTransformer(MODEL_NAME, cache_folder=MODEL_PATH)
+            model = load_model()
             
             # C. Encode Query & Search
             query_embedding = model.encode(query, convert_to_tensor=True)
